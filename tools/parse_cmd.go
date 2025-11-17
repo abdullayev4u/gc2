@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ type Gc2Cmd struct {
 	Repo_domain string
 	Repo_author string
 	Repo_name   string
+
+	DestFullPath string
 
 	Depth  int
 	Editor string
@@ -111,6 +114,8 @@ func ParseCommand(args []string) (*Gc2Cmd, error) {
 			return nil, err
 		}
 	}
+
+	c.DestFullPath = filepath.Join(mustHomeDir(), c.Repo_domain, c.Repo_author, c.Repo_name)
 
 	return c, nil
 }
