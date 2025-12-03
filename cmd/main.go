@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/abdullayev4u/gc2/config"
 	"github.com/abdullayev4u/gc2/tools"
@@ -30,11 +31,18 @@ func main() {
 	err = tools.EnsureParent(cmd)
 	exit(err)
 
+	wg := new(sync.WaitGroup)
+	wg.Add(1)
+	go tools.LoadIcons(cmd, wg)
+
 	err = tools.GitClone(cmd)
 	exit(err)
 
 	err = tools.OpenEditor(cmd)
 	exit(err)
+
+	wg.Wait()
+
 }
 
 func exit(err error, code ...int) {
