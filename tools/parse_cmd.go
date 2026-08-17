@@ -2,36 +2,63 @@ package tools
 
 import (
 	"fmt"
-	"path/filepath"
+	"net"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/abdullayev4u/gc2/config"
 )
 
 type Gc2Cmd struct {
 	RepoUrl string
 
 	Repo_domain string
-	Repo_author string
+	Repo_groups []string
 	Repo_name   string
 
 	DestFullPath string
 
+	// DomainFolderPath is the <root>/<domain> directory, or "" when the repo
+	// does not live under one. Only the folder icon cares.
+	DomainFolderPath string
+
+	// MatchedRule is the mapping rule that decided DestFullPath, or nil when
+	// the remote layout was mirrored.
+	MatchedRule *Rule
+
+	// Depth and Editor hold the command-line flags only. Cfg holds the
+	// effective settings once those flags have been merged over the config
+	// file; everything downstream reads Cfg.
 	Depth  int
 	Editor string
+
+	Cfg config.Resolved
 }
 
+// scpPattern matches git's scp-like syntax: [user@]host:path/to/repo.git
+var scpPattern = regexp.MustCompile(`^(?:([^@/]+)@)?([^:/]+):(.+)$`)
+
+// ParseCommand reads the flags and repository URL from argv.
 func ParseCommand(args []string) (*Gc2Cmd, error) {
 	c := new(Gc2Cmd)
+
+	seenUrl := false
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 
 		{
-			if strings.HasPrefix(arg, "-d") {
-				val, ok := tryOneOption("-d", arg)
+			if strings.HasPrefix(arg, "-d") || strings.HasPrefix(arg, "--depth") {
+				name := "-d"
+				if strings.HasPrefix(arg, "--depth") {
+					name = "--depth"
+				}
+
+				val, ok := tryOneOption(name, arg)
 				if !ok {
-					if arg != "-d" || i+1 == len(args) {
+					if arg != name || i+1 == len(args) {
 						return nil, errNotSupporedOF(arg)
 					}
 
@@ -45,33 +72,20 @@ func ParseCommand(args []string) (*Gc2Cmd, error) {
 				}
 
 				c.Depth = depth
-			}
-
-			if strings.HasPrefix(arg, "--depth") {
-				val, ok := tryOneOption("--depth", arg)
-				if !ok {
-					if arg != "--depth" || i+1 == len(args) {
-						return nil, errNotSupporedOF(arg)
-					}
-
-					i++
-					val = args[i]
-				}
-
-				depth, err := strconv.Atoi(val)
-				if err != nil {
-					return nil, fmt.Errorf("err parsing option [%s] with value [%s]", arg, val)
-				}
-
-				c.Depth = depth
+				continue
 			}
 		}
 
 		{
-			if strings.HasPrefix(arg, "-e") {
-				val, ok := tryOneOption("-e", arg)
+			if strings.HasPrefix(arg, "-e") || strings.HasPrefix(arg, "--editor") {
+				name := "-e"
+				if strings.HasPrefix(arg, "--editor") {
+					name = "--editor"
+				}
+
+				val, ok := tryOneOption(name, arg)
 				if !ok {
-					if arg != "-e" || i+1 == len(args) {
+					if arg != name || i+1 == len(args) {
 						return nil, errNotSupporedOF(arg)
 					}
 
@@ -84,24 +98,7 @@ func ParseCommand(args []string) (*Gc2Cmd, error) {
 				}
 
 				c.Editor = val
-			}
-
-			if strings.HasPrefix(arg, "--editor") {
-				val, ok := tryOneOption("--editor", arg)
-				if !ok {
-					if arg != "--editor" || i+1 == len(args) {
-						return nil, errNotSupporedOF(arg)
-					}
-
-					i++
-					val = args[i]
-				}
-
-				if !isValidCmdName(val) {
-					return nil, fmt.Errorf("invalid editor command name [%s]", val)
-				}
-
-				c.Editor = val
+				continue
 			}
 		}
 
@@ -109,73 +106,108 @@ func ParseCommand(args []string) (*Gc2Cmd, error) {
 			return nil, errNotSupporedOF(arg)
 		}
 
+		if seenUrl {
+			return nil, fmt.Errorf("only one repository URL is supported, got a second one [%s]", arg)
+		}
+
 		err := parseRepoUrl(arg, c)
 		if err != nil {
 			return nil, err
 		}
+
+		seenUrl = true
 	}
 
-	c.DestFullPath = filepath.Join(mustHomeDir(), c.Repo_domain, c.Repo_author, c.Repo_name)
+	// Without this the repo fields stay empty and the destination collapses to
+	// the home directory itself, which would clone straight into $HOME.
+	if !seenUrl {
+		return nil, fmt.Errorf("no repository URL given\nusage: gc2 <repo-url>")
+	}
 
 	return c, nil
 }
 
+// parseRepoUrl splits a clone URL into host, group segments and repository
+// name. Unlike a fixed host/author/repo shape, any number of group segments is
+// accepted, which is what GitLab subgroups need.
 func parseRepoUrl(arg string, c *Gc2Cmd) error {
 	c.RepoUrl = arg
 
-	// Support generic Git host patterns:
-	// 1) https://gitdomain.com/author/repo(.git)?
-	// 2) http://gitdomain.com/author/repo(.git)?
-	// 3) git@gitdomain.com:author/repo(.git)?
-	// 4) ssh://git@gitdomain.com/author/repo(.git)?
-
-	httpsPattern := regexp.MustCompile(`^https?://([^/]+)/([^/]+)/([^/]+?)(?:\.git)?/?$`)
-	httpPattern := regexp.MustCompile(`^http?://([^/]+)/([^/]+)/([^/]+?)(?:\.git)?/?$`)
-	sshPatternA := regexp.MustCompile(`^git@([^:]+):([^/]+)/([^/]+?)(?:\.git)?$`)
-	sshPatternB := regexp.MustCompile(`^ssh://git@([^/]+)/([^/]+)/([^/]+?)(?:\.git)?/?$`)
-
-	m := httpsPattern.FindStringSubmatch(arg)
-	if m == nil {
-		m = httpPattern.FindStringSubmatch(arg)
-	}
-	if m == nil {
-		m = sshPatternA.FindStringSubmatch(arg)
-	}
-	if m == nil {
-		m = sshPatternB.FindStringSubmatch(arg)
+	host, path, err := splitRepoUrl(arg)
+	if err != nil {
+		return err
 	}
 
-	if m == nil {
-		return fmt.Errorf("unsupported git URL[%s];\n	expected <scheme>://<domain>/<author>/<repo>[.git] or git@<domain>:<author>/<repo>[.git]", arg)
+	segments := splitPath(path)
+	if len(segments) < 2 {
+		return fmt.Errorf(
+			"git URL [%s] has no group segment;\n	expected <scheme>://<domain>/<group>[/<subgroup>...]/<repo>[.git] or git@<domain>:<group>/<repo>[.git]",
+			arg,
+		)
 	}
 
-	c.Repo_domain = m[1]
-	c.Repo_author = m[2]
-	c.Repo_name = strings.TrimSuffix(m[3], ".git")
+	c.Repo_domain = host
+	c.Repo_groups = segments[:len(segments)-1]
+	c.Repo_name = strings.TrimSuffix(segments[len(segments)-1], ".git")
 
 	return nil
 }
 
-// var (
-// 	// https://github.com/owner/repo(.git)?
-// 	httpsPattern = regexp.MustCompile(`^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$`)
-// 	// git@github.com:owner/repo(.git)?
-// 	sshPatternA = regexp.MustCompile(`^git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$`)
-// 	// ssh://git@github.com/owner/repo(.git)?
-// 	sshPatternB = regexp.MustCompile(`^ssh://git@github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$`)
-// )
-// func parseGitHubURL(u string) (owner string, repo string, err error) {
-// 	if m := httpsPattern.FindStringSubmatch(u); m != nil {
-// 		return m[1], trimGitSuffix(m[2]), nil
-// 	}
-// 	if m := sshPatternA.FindStringSubmatch(u); m != nil {
-// 		return m[1], trimGitSuffix(m[2]), nil
-// 	}
-// 	if m := sshPatternB.FindStringSubmatch(u); m != nil {
-// 		return m[1], trimGitSuffix(m[2]), nil
-// 	}
-// 	return "", "", errors.New("unsupported or non-GitHub URL format; expected github.com URL")
-// }
+// splitRepoUrl extracts the bare hostname and path from any git URL form.
+func splitRepoUrl(arg string) (host, path string, err error) {
+	// Support:
+	// 1) https://gitdomain.com/group[/subgroup...]/repo(.git)?
+	// 2) http://gitdomain.com/group[/subgroup...]/repo(.git)?
+	// 3) ssh://git@gitdomain.com/group[/subgroup...]/repo(.git)?
+	// 4) git@gitdomain.com:group[/subgroup...]/repo(.git)?
+
+	if strings.Contains(arg, "://") {
+		u, perr := url.Parse(arg)
+		if perr != nil {
+			return "", "", unsupportedUrl(arg)
+		}
+
+		switch u.Scheme {
+		case "http", "https", "ssh", "git":
+		default:
+			return "", "", unsupportedUrl(arg)
+		}
+
+		if u.Host == "" || strings.Trim(u.Path, "/") == "" {
+			return "", "", unsupportedUrl(arg)
+		}
+
+		return bareHost(u.Host), u.Path, nil
+	}
+
+	if m := scpPattern.FindStringSubmatch(arg); m != nil {
+		if m[2] == "" || strings.Trim(m[3], "/") == "" {
+			return "", "", unsupportedUrl(arg)
+		}
+
+		return bareHost(m[2]), m[3], nil
+	}
+
+	return "", "", unsupportedUrl(arg)
+}
+
+// bareHost strips any port from a host so it can be used as a folder name.
+// A colon is legal in a macOS path but shows up as "/" in Finder, and is
+// outright illegal on Windows.
+func bareHost(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil && h != "" {
+		host = h
+	}
+
+	return strings.ToLower(strings.Trim(host, "[]"))
+}
+
+func unsupportedUrl(arg string) error {
+	return fmt.Errorf(
+		"unsupported git URL[%s];\n	expected <scheme>://<domain>/<group>[/<subgroup>...]/<repo>[.git] or git@<domain>:<group>/<repo>[.git]",
+		arg,
+	)
+}
 
 func tryOneOption(name, arg string) (string, bool) {
 	nameEuals := name + "="

@@ -3,18 +3,14 @@ package tools
 import (
 	"os"
 	"os/exec"
-
-	"github.com/abdullayev4u/gc2/config"
 )
 
 func OpenEditor(c *Gc2Cmd) error {
-	if c.Editor == "none" {
-		return nil
-	}
+	editor := c.Cfg.Editor
 
-	editor := c.Editor
-	if editor == "" {
-		editor = config.DefaultEditor
+	// "none" is the opt-out, from either the flag or the config file.
+	if editor == "none" || editor == "" {
+		return nil
 	}
 
 	cmd := exec.Command(editor, c.DestFullPath)

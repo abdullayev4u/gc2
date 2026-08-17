@@ -8,14 +8,19 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/abdullayev4u/gc2/config"
 	"github.com/abdullayev4u/gc2/tools/ostools"
 )
 
 func LoadIcons(c *Gc2Cmd, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	if !config.SyncDomainIcon {
+	if !c.Cfg.SyncDomainIcon {
+		return
+	}
+
+	// With domainFolder off, or an absolute mapping target, there is no
+	// per-host folder to decorate.
+	if c.DomainFolderPath == "" {
 		return
 	}
 
@@ -31,9 +36,13 @@ func LoadIcons(c *Gc2Cmd, wg *sync.WaitGroup) {
 	}
 
 	iconPath := loadDomainIcon(c)
+	if iconPath == "" {
+		// Every candidate URL failed; setting an empty icon would only
+		// produce a confusing warning.
+		return
+	}
 
-	domainFolder := filepath.Join(mustHomeDir(), c.Repo_domain)
-	err := ostools.SetCustomIcon(domainFolder, iconPath)
+	err := ostools.SetCustomIcon(c.DomainFolderPath, iconPath)
 
 	if err != nil {
 		fmt.Printf("Warning: failed to set custom icon: %s\n", err.Error())
