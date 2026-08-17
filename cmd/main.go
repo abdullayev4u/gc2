@@ -135,6 +135,6 @@ func exit(err error, code ...int) {
 }
 
 func printVersion() {
-	fmt.Printf("v%s", config.Version)
+	fmt.Printf("v%s\n\n\n", config.Version)
 	os.Exit(0)
 }

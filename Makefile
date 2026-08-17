@@ -18,12 +18,14 @@ endif
 TARGET := $(GOBIN_DIR)/$(BINARY)
 
 .DEFAULT_GOAL := help
-.PHONY: help build test vet fmt check update4macos uninstall status guard-macos
+.PHONY: help build test vet fmt check update4macos update4lnx uninstall status \
+	guard-macos guard-linux
 
 help:
 	@echo "gc2 development tasks"
 	@echo
 	@echo "  make update4macos   check, build and install to $(TARGET)"
+	@echo "  make update4lnx     same, on Linux"
 	@echo "  make status         show the installed binary and where it came from"
 	@echo "  make check          gofmt check, vet and tests"
 	@echo "  make build          compile everything without producing a binary"
@@ -78,6 +80,25 @@ update4macos: guard-macos check
 	@command -v $(BINARY) >/dev/null 2>&1 || \
 		echo "note: $(BINARY) is not on your PATH; add $(GOBIN_DIR) to it"
 
+## update4lnx is update4macos for Linux. The recipe is deliberately a copy
+## rather than a shared target: update4macos is the one people use every day,
+## and keeping it exactly as it was is worth more here than removing the
+## duplication. Any change to one should be made to the other.
+update4lnx: guard-linux check
+	@mkdir -p "$(GOBIN_DIR)"
+	@tmp="$(TARGET).new.$$$$"; \
+	if go build -trimpath -o "$$tmp" $(PKG); then \
+		mv -f "$$tmp" "$(TARGET)"; \
+	else \
+		rm -f "$$tmp"; \
+		exit 1; \
+	fi
+	@echo
+	@echo "installed: $(TARGET)"
+	@echo "version:   $$($(TARGET) version)"
+	@command -v $(BINARY) >/dev/null 2>&1 || \
+		echo "note: $(BINARY) is not on your PATH; add $(GOBIN_DIR) to it"
+
 status:
 	@echo "install dir: $(GOBIN_DIR)"
 	@if [ -x "$(TARGET)" ]; then \
@@ -98,5 +119,13 @@ uninstall:
 guard-macos:
 	@[ "$$(uname -s)" = "Darwin" ] || { \
 		echo "update4macos targets macOS; this machine reports $$(uname -s)"; \
+		exit 1; \
+	}
+
+# On Linux the Cocoa file is excluded by its build tag and SetCustomIcon is a
+# no-op, so the guard is about running the target you meant, not about cgo.
+guard-linux:
+	@[ "$$(uname -s)" = "Linux" ] || { \
+		echo "update4lnx targets Linux; this machine reports $$(uname -s)"; \
 		exit 1; \
 	}
