@@ -76,6 +76,13 @@ func ParseCommand(args []string) (*Gc2Cmd, error) {
 			}
 		}
 
+		// Shorthand for "-e none": clone without opening an editor. Checked
+		// before -e, which would otherwise read it as the editor "n".
+		if arg == "-en" || arg == "--no-editor" {
+			c.Editor = "none"
+			continue
+		}
+
 		{
 			if strings.HasPrefix(arg, "-e") || strings.HasPrefix(arg, "--editor") {
 				name := "-e"

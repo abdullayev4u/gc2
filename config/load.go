@@ -34,7 +34,7 @@ const Template = `# gc2 configuration
 default:
   root: "~"                # base directory for everything gc2 clones
   domainFolder: true       # create <root>/<host>/... ; false drops the host level
-  editor: code             # command used to open a repo; "gc2 -e none <url>" skips it
+  editor: code             # command used to open a repo; "gc2 -en <url>" skips it
   depth: -1                # >0 clones with --depth N; anything else clones full history
   openExisting: true       # already cloned? open it instead of failing
   syncDomainIcon: false    # macOS only: paint the host's favicon onto its folder

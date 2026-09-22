@@ -25,6 +25,7 @@ Usage:
 Options:
   -d, --depth <n>               clone with --depth n; anything <= 0 clones full history
   -e, --editor <cmd>            editor to open the repo with; "none" skips opening
+  -en, --no-editor              clone only, don't open an editor (same as -e none)
 
 URLs may be https, ssh or scp-style, with any number of group segments:
   gc2 https://github.com/abdullayev4u/gc2.git
