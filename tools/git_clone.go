@@ -39,7 +39,33 @@ func GitClone(c *Gc2Cmd) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	printCloneDone(c.DestFullPath)
+
+	return nil
+}
+
+// printCloneDone separates git's output from ours and prints the path on a
+// line of its own, so it can be copied with a double-click. A path under the
+// user's home is shown as ~/..., which still works when pasted into a shell.
+func printCloneDone(path string) {
+	if home, err := os.UserHomeDir(); err == nil {
+		path = shortenHome(path, home)
+	}
+
+	line := strings.Repeat("=", 60)
+
+	fmt.Println()
+	fmt.Println(line)
+	fmt.Println(line)
+	fmt.Println()
+	fmt.Println()
+	fmt.Println("✅ Done, project is ready at:")
+	fmt.Println(path)
+	fmt.Println()
 }
 
 // inspectDestination decides whether the destination is safe to clone into.

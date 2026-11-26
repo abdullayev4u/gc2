@@ -256,3 +256,19 @@ func expandTilde(p, home string) string {
 	}
 	return p
 }
+
+// shortenHome is the reverse of expandTilde: a path under home is written as
+// ~/..., anything else is returned unchanged.
+func shortenHome(p, home string) string {
+	home = strings.TrimSuffix(home, "/")
+	if home == "" {
+		return p
+	}
+	if p == home {
+		return "~"
+	}
+	if strings.HasPrefix(p, home+"/") {
+		return "~/" + p[len(home)+1:]
+	}
+	return p
+}
